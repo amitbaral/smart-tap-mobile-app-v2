@@ -50,7 +50,11 @@
           "nfcPermission": "Allow SmartTap to interact with nearby NFC devices.",
           "includeNdefEntitlement": false
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "expo-image",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,
