@@ -7,14 +7,11 @@
     "icon": "./assets/branding/app_icon.png",
     "scheme": "smarttap-nfc",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "au.com.smarttap.nfcwriter",
       "entitlements": {
-        "com.apple.developer.nfc.readersession.formats": [
-          "TAG"
-        ]
+        "com.apple.developer.nfc.readersession.formats": ["TAG"]
       },
       "infoPlist": {
         "NFCReaderUsageDescription": "This app uses NFC to write your profile URL to SmartTap business cards.",
@@ -27,11 +24,7 @@
         "foregroundImage": "./assets/branding/app_icon.png",
         "backgroundColor": "#121212"
       },
-      "permissions": [
-        "NFC",
-        "android.permission.NFC"
-      ],
-      "edgeToEdgeEnabled": true
+      "permissions": ["NFC", "android.permission.NFC"]
     },
     "plugins": [
       "expo-router",
