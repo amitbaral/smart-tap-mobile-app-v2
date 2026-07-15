@@ -3,28 +3,28 @@ import { supabase } from "@/lib/supabase";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-    Building,
-    ChevronRight,
-    CreditCard,
-    IdCard,
-    LogOut,
-    Mail,
-    Radio,
-    User,
+  Building,
+  ChevronRight,
+  CreditCard,
+  IdCard,
+  LogOut,
+  Mail,
+  Radio,
+  User,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Platform,
-    RefreshControl,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 interface Profile {
