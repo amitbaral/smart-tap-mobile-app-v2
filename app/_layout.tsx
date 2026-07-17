@@ -12,13 +12,20 @@ import { useEffect, useState } from "react";
 
 export type UserRole = "user" | "social" | "admin" | "super_admin";
 
-const ADMIN_ROLES: UserRole[] = ["admin", "super_admin"];
+const ADMIN_ROLES: UserRole[] = ["super_admin"];
 
-async function fetchRole(userId: string): Promise<UserRole> {
+async function fetchRole(session: Session): Promise<UserRole> {
+  // Match web app resolution: app_metadata.role → user_metadata.role → roles table → 'user'
+  const appRole = session.user.app_metadata?.role as UserRole | undefined;
+  if (appRole) return appRole;
+
+  const userMetaRole = session.user.user_metadata?.role as UserRole | undefined;
+  if (userMetaRole) return userMetaRole;
+
   const { data } = await supabase
     .from("roles")
     .select("role")
-    .eq("user_id", userId)
+    .eq("user_id", session.user.id)
     .single();
   return (data?.role as UserRole) ?? "user";
 }
@@ -35,7 +42,7 @@ export default function RootLayout() {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       if (session) {
-        const role = await fetchRole(session.user.id);
+        const role = await fetchRole(session);
         setUserRole(role);
       }
       setInitialized(true);
@@ -46,7 +53,7 @@ export default function RootLayout() {
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session) {
-        const role = await fetchRole(session.user.id);
+        const role = await fetchRole(session);
         setUserRole(role);
       } else {
         setUserRole(null);
@@ -70,15 +77,13 @@ export default function RootLayout() {
       role: userRole,
       isAdmin,
       segments,
-    })
+    });
 
     if (!session && !isLoginPage) {
-      u
+      router.replace("/login");
     } else if (session && isLoginPage) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       router.replace({ pathname: isAdmin ? ("/admin" as any) : "/" });
     } else if (session && isAdmin && !isAdminPage) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       router.replace({ pathname: "/admin" as any });
     } else if (session && !isAdmin && isAdminPage) {
       router.replace("/");
@@ -87,9 +92,17 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={DarkTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: "#111111" },
+          headerTintColor: "#ffffff",
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: "#0a0a0a" },
+        }}
+      >
         <Stack.Screen name="index" />
-        <Stack.Screen name="login" />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="admin/index" />
         <Stack.Screen name="admin/user/[id]" />
         <Stack.Screen name="admin/user/edit-profile/[profileId]" />

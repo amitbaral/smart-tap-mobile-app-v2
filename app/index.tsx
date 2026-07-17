@@ -1,7 +1,9 @@
 import { nfcService } from "@/lib/nfc";
 import { supabase } from "@/lib/supabase";
+import { colors } from "@/theme/colors";
 import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
+import { Stack } from "expo-router";
 import {
   Building,
   ChevronRight,
@@ -16,16 +18,13 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
-  Platform,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
 
 interface Profile {
   id: string;
@@ -46,24 +45,16 @@ export default function HomeScreen() {
   const fetchProfiles = async () => {
     try {
       setLoading(true);
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
+      const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
-
       const { data, error } = await supabase
         .from("profiles")
-        .select(
-          "id, first_name, last_name, job_title, company_name, email_address, avatar_url",
-        )
+        .select("id, first_name, last_name, job_title, company_name, email_address, avatar_url")
         .eq("user_id", session.user.id)
         .order("created_at", { ascending: false });
-
       if (error) throw error;
       setProfiles(data || []);
-    } catch (error: any) {
-      console.error("Error fetching profiles:", error);
+    } catch {
       Alert.alert("Error", "Failed to load profiles.");
     } finally {
       setLoading(false);
@@ -71,366 +62,140 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchProfiles();
-  }, []);
+  useEffect(() => { fetchProfiles(); }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchProfiles();
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const handleSignOut = async () => { await supabase.auth.signOut(); };
 
   const handleWriteTag = async (profile: Profile) => {
     setWritingId(profile.id);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    // Attempt to write the tag
     const result = await nfcService.writeProfileUrl(profile.id);
-
     if (result.success) {
-      Alert.alert(
-        "Success",
-        `Tag updated successfully for ${profile.first_name}!`,
-      );
+      Alert.alert("Success", `Tag updated for ${profile.first_name}!`);
     } else if (result.error !== "Write cancelled.") {
       Alert.alert("NFC Error", result.error || "Failed to write tag.");
     }
-
     setWritingId(null);
   };
 
   if (loading && !refreshing) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>
-          Fetching your SmartTap profiles...
-        </Text>
+      <View style={{ flex:1, backgroundColor:colors.bg, justifyContent:"center", alignItems:"center", gap:12 }}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={{ color:colors.secondaryLabel, fontSize:15 }}>Fetching your SmartTap profiles…</Text>
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <LinearGradient
-        colors={["#1a1a1a", "#0a0a0a"]}
-        style={styles.background}
+    <>
+      <Stack.Screen
+        options={{
+          title: "My SmartTap Cards",
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={handleSignOut}
+              style={{ width:36, height:36, borderRadius:18, backgroundColor:colors.card, justifyContent:"center", alignItems:"center" }}
+              activeOpacity={0.7}
+            >
+              <LogOut size={18} color={colors.danger} />
+            </TouchableOpacity>
+          ),
+        }}
       />
-
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>My SmartTap Cards</Text>
-          <Text style={styles.headerSubtitle}>
-            Select a profile to write to your tag
-          </Text>
-        </View>
-        <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
-          <LogOut size={20} color="#FF3B30" />
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#007AFF"
-          />
-        }
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ padding:16, gap:14, paddingBottom:40 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>{ setRefreshing(true); fetchProfiles(); }} tintColor={colors.accent} />}
       >
         {profiles.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconContainer}>
-              <CreditCard size={48} color="#444" />
+          <View style={{ alignItems:"center", paddingTop:80, gap:12 }}>
+            <View style={{ width:80, height:80, borderRadius:20, borderCurve:"continuous", backgroundColor:colors.card, justifyContent:"center", alignItems:"center" }}>
+              <CreditCard size={36} color={colors.quaternaryLabel} />
             </View>
-            <Text style={styles.emptyTitle}>No Profiles Found</Text>
-            <Text style={styles.emptyText}>
+            <Text style={{ fontSize:18, fontWeight:"600", color:colors.label }}>No Profiles Found</Text>
+            <Text style={{ fontSize:14, color:colors.secondaryLabel, textAlign:"center", paddingHorizontal:32 }}>
               Create your first profile in the SmartTap web app to get started.
             </Text>
           </View>
         ) : (
-          profiles.map((profile) => (
-            <TouchableOpacity
-              key={profile.id}
-              activeOpacity={0.9}
-              style={styles.cardContainer}
-              onPress={() => handleWriteTag(profile)}
-            >
-              <LinearGradient
-                colors={["#2c2c2e", "#1c1c1e"]}
-                style={styles.cardGradient}
-              >
-                <View style={styles.cardTop}>
-                  <View style={styles.avatarContainer}>
-                    {profile.avatar_url ? (
-                      <Image
-                        source={{ uri: profile.avatar_url }}
-                        style={styles.avatar}
-                      />
-                    ) : (
-                      <View style={styles.avatarPlaceholder}>
-                        <User size={24} color="#8e8e93" />
+          profiles.map((profile, index) => {
+            const isWriting = writingId === profile.id;
+            return (
+              <Animated.View key={profile.id} entering={FadeInDown.delay(index * 60).springify()}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => handleWriteTag(profile)}
+                  disabled={!!writingId && !isWriting}
+                  style={{
+                    backgroundColor:colors.card,
+                    borderRadius:16,
+                    borderCurve:"continuous",
+                    borderWidth:1,
+                    borderColor:colors.cardBorder,
+                    padding:16,
+                    gap:12,
+                    opacity:!!writingId && !isWriting ? 0.5 : 1,
+                    boxShadow:"0 4px 16px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <View style={{ flexDirection:"row", justifyContent:"space-between", alignItems:"center" }}>
+                    <View style={{ flexDirection:"row", gap:12, alignItems:"center", flex:1 }}>
+                      <View style={{ width:48, height:48, borderRadius:24, backgroundColor:colors.separator, overflow:"hidden" }}>
+                        {profile.avatar_url ? (
+                          <Image source={profile.avatar_url} style={{ width:48, height:48 }} contentFit="cover" />
+                        ) : (
+                          <View style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
+                            <User size={22} color={colors.secondaryLabel} />
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
-                  <View style={styles.writeIndicator}>
-                    <Radio
-                      size={16}
-                      color={writingId === profile.id ? "#34C759" : "#8e8e93"}
-                    />
-                    <Text
-                      style={[
-                        styles.writeText,
-                        writingId === profile.id && styles.writingActiveText,
-                      ]}
-                    >
-                      {writingId === profile.id
-                        ? "Writing..."
-                        : "Ready to write"}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.cardInfo}>
-                  <Text style={styles.profileName}>
-                    {profile.first_name} {profile.last_name}
-                  </Text>
-
-                  <View style={styles.infoRow}>
-                    <Mail size={14} color="#8e8e93" style={styles.infoIcon} />
-                    <Text style={styles.infoText}>{profile.email_address}</Text>
-                  </View>
-
-                  {!!profile.job_title && (
-                    <View style={styles.infoRow}>
-                      <Building
-                        size={14}
-                        color="#8e8e93"
-                        style={styles.infoIcon}
-                      />
-                      <Text style={styles.infoText}>
-                        {profile.job_title}{" "}
-                        {profile.company_name
-                          ? `@ ${profile.company_name}`
-                          : ""}
+                      <View style={{ gap:2, flex:1 }}>
+                        <Text style={{ fontSize:17, fontWeight:"600", color:colors.label }}>{profile.first_name} {profile.last_name}</Text>
+                        {!!profile.job_title && (
+                          <Text style={{ fontSize:13, color:colors.secondaryLabel }}>
+                            {profile.job_title}{profile.company_name ? ` · ${profile.company_name}` : ""}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                    <View style={{ flexDirection:"row", alignItems:"center", gap:5, backgroundColor:isWriting?"rgba(52,199,89,0.12)":colors.separator, paddingHorizontal:10, paddingVertical:5, borderRadius:12, borderCurve:"continuous" }}>
+                      <Radio size={14} color={isWriting ? colors.success : colors.secondaryLabel} />
+                      <Text style={{ fontSize:12, fontWeight:"600", color:isWriting ? colors.success : colors.secondaryLabel }}>
+                        {isWriting ? "Writing…" : "Write NFC"}
                       </Text>
                     </View>
-                  )}
-
-                  <View style={styles.idRow}>
-                    <IdCard size={14} color="#48484a" style={styles.infoIcon} />
-                    <Text style={styles.idText}>ID: {profile.id}</Text>
                   </View>
-                </View>
 
-                <View style={styles.cardFooter}>
-                  <Text style={styles.tapPrompt}>Tap card to write NFC</Text>
-                  <ChevronRight size={18} color="#007AFF" />
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          ))
+                  <View style={{ gap:5 }}>
+                    <View style={{ flexDirection:"row", alignItems:"center", gap:6 }}>
+                      <Mail size={13} color={colors.tertiaryLabel} />
+                      <Text style={{ fontSize:13, color:colors.secondaryLabel }} numberOfLines={1}>{profile.email_address}</Text>
+                    </View>
+                    {!!profile.job_title && (
+                      <View style={{ flexDirection:"row", alignItems:"center", gap:6 }}>
+                        <Building size={13} color={colors.tertiaryLabel} />
+                        <Text style={{ fontSize:13, color:colors.secondaryLabel }} numberOfLines={1}>
+                          {profile.job_title}{profile.company_name ? ` @ ${profile.company_name}` : ""}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={{ flexDirection:"row", alignItems:"center", gap:6 }}>
+                      <IdCard size={13} color={colors.quaternaryLabel} />
+                      <Text selectable style={{ fontSize:11, color:colors.quaternaryLabel, fontVariant:["tabular-nums"] }}>{profile.id}</Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection:"row", justifyContent:"space-between", alignItems:"center", paddingTop:8, borderTopWidth:0.5, borderTopColor:colors.separator }}>
+                    <Text style={{ fontSize:13, color:colors.secondaryLabel }}>Tap to write NFC tag</Text>
+                    <ChevronRight size={16} color={colors.accent} />
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })
         )}
       </ScrollView>
-    </SafeAreaView>
+    </>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0a0a0a",
-  },
-  background: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    height: "100%",
-  },
-  centerContainer: {
-    flex: 1,
-    backgroundColor: "#0a0a0a",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 10,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    marginTop: 10,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#fff",
-    letterSpacing: 0.5,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: "#8e8e93",
-    marginTop: 4,
-  },
-  signOutButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#1c1c1e",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  loadingText: {
-    color: "#8e8e93",
-    marginTop: 15,
-    fontSize: 16,
-  },
-  cardContainer: {
-    marginBottom: 20,
-    borderRadius: 20,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
-    elevation: 10,
-  },
-  cardGradient: {
-    padding: 20,
-    minHeight: 180,
-  },
-  cardTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 20,
-  },
-  avatarContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#3a3a3c",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#48484a",
-  },
-  avatar: {
-    width: "100%",
-    height: "100%",
-  },
-  avatarPlaceholder: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  writeIndicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1c1c1e",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#3a3a3c",
-  },
-  writeText: {
-    color: "#8e8e93",
-    fontSize: 11,
-    fontWeight: "600",
-    marginLeft: 6,
-    textTransform: "uppercase",
-  },
-  writingActiveText: {
-    color: "#34C759",
-  },
-  cardInfo: {
-    marginBottom: 15,
-  },
-  profileName: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#fff",
-    marginBottom: 8,
-  },
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  infoIcon: {
-    marginRight: 8,
-  },
-  infoText: {
-    color: "#8e8e93",
-    fontSize: 14,
-  },
-  idRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 10,
-    opacity: 0.6,
-  },
-  idText: {
-    fontSize: 11,
-    color: "#636366",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-  },
-  cardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.05)",
-  },
-  tapPrompt: {
-    color: "#007AFF",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingTop: 100,
-  },
-  emptyIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#1c1c1e",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#3a3a3c",
-  },
-  emptyTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 8,
-  },
-  emptyText: {
-    color: "#8e8e93",
-    fontSize: 15,
-    textAlign: "center",
-    paddingHorizontal: 40,
-    lineHeight: 22,
-  },
-});

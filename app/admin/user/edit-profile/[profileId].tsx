@@ -1,8 +1,8 @@
 import { pickImage } from "@/lib/pickImage";
 import { supabase } from "@/lib/supabase";
-import { LinearGradient } from "expo-linear-gradient";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Check, Edit2, Plus, Trash2, X } from "lucide-react-native";
+import { colors } from "@/theme/colors";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Check, Edit2, Plus, Trash2, X } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -12,7 +12,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
@@ -89,52 +88,52 @@ interface ProfileForm {
   mobile_number: string;
   profile_note: string;
   avatar_url: string;
-  cover_photo_url: string;
+  cover_image: string;          // actual DB column name
   street_address: string;
-  street2: string;
+  street: string;               // actual DB column name (not street2)
   city: string;
   state_province: string;
   postcode: string;
   country: string;
-  show_company_info: boolean;
   company_name: string;
   company_website: string;
   company_phone_number: string;
-  show_social_links: boolean;
+  contact_exchange_enabled: boolean;
+  // Appearance — from profile_appearance_settings table
   background_color: string;
   text_color: string;
   button_color: string;
   button_text_color: string;
-  show_services: boolean;
-  show_products: boolean;
-  show_quick_links: boolean;
-  contact_exchange_enabled: boolean;
+  override_company_template: boolean;
 }
 
-interface SocialLink {
+interface Product {
+  id: string | null;
+  title: string;
+  description: string;
+  _deleted?: boolean;
+  _editing?: boolean;
+}
+
+interface SocialMediaLink {
   id: string | null;
   platform: string;
   url: string;
   _deleted?: boolean;
 }
+
 interface Service {
   id: string | null;
   title: string;
-  description: string;
-  _deleted?: boolean;
-  _editing?: boolean;
-}
-interface Product {
-  id: string | null;
-  name: string;
   description: string;
   price: string;
   _deleted?: boolean;
   _editing?: boolean;
 }
+
 interface QuickLink {
   id: string | null;
-  title: string;
+  link_name: string;  // actual DB column name
   url: string;
   _deleted?: boolean;
   _editing?: boolean;
@@ -150,26 +149,22 @@ const EMPTY_FORM: ProfileForm = {
   mobile_number: "",
   profile_note: "",
   avatar_url: "",
-  cover_photo_url: "",
+  cover_image: "",
   street_address: "",
-  street2: "",
+  street: "",
   city: "",
   state_province: "",
   postcode: "",
   country: "",
-  show_company_info: false,
   company_name: "",
   company_website: "",
   company_phone_number: "",
-  show_social_links: false,
+  contact_exchange_enabled: false,
   background_color: "",
   text_color: "",
   button_color: "",
   button_text_color: "",
-  show_services: false,
-  show_products: false,
-  show_quick_links: false,
-  contact_exchange_enabled: false,
+  override_company_template: false,
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -179,10 +174,12 @@ export default function AdminEditProfile() {
   const router = useRouter();
 
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
-  const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [socialLinks, setSocialLinks] = useState<SocialMediaLink[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([]);
+  // sections_visibility table: section_name → is_visible
+  const [sectionsVisibility, setSectionsVisibility] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
@@ -200,28 +197,23 @@ export default function AdminEditProfile() {
   const loadProfile = async () => {
     if (!profileId) return;
     try {
-      const [profileRes, socialRes, servicesRes, productsRes, quickRes] =
+      const [profileRes, appearanceRes, productsRes, socialRes, servicesRes, quickRes, sectionsRes] =
         await Promise.all([
           supabase.from("profiles").select("*").eq("id", profileId).single(),
           supabase
-            .from("social_links")
-            .select("id,platform,url")
-            .eq("profile_id", profileId),
-          supabase
-            .from("services")
-            .select("id,title,description")
-            .eq("profile_id", profileId),
-          supabase
-            .from("products")
-            .select("id,name,description,price")
-            .eq("profile_id", profileId),
-          supabase
-            .from("quick_links")
-            .select("id,title,url")
-            .eq("profile_id", profileId),
+            .from("profile_appearance_settings")
+            .select("background_color,text_color,button_color,button_text_color,override_company_template")
+            .eq("profile_id", profileId)
+            .maybeSingle(),
+          supabase.from("products").select("id,title,description").eq("profile_id", profileId),
+          supabase.from("social_media_links").select("id,platform,url").eq("profile_id", profileId),
+          supabase.from("services").select("id,title,description,price").eq("profile_id", profileId),
+          supabase.from("quick_links").select("id,link_name,url").eq("profile_id", profileId),
+          supabase.from("sections_visibility").select("section_name,is_visible").eq("profile_id", profileId),
         ]);
       if (profileRes.error) throw profileRes.error;
       const d = profileRes.data;
+      const a = appearanceRes.data;
       setForm({
         first_name: d.first_name ?? "",
         middle_name: d.middle_name ?? "",
@@ -232,56 +224,30 @@ export default function AdminEditProfile() {
         mobile_number: d.mobile_number ?? "",
         profile_note: d.profile_note ?? "",
         avatar_url: d.avatar_url ?? "",
-        cover_photo_url: d.cover_photo_url ?? "",
+        cover_image: d.cover_image ?? "",
         street_address: d.street_address ?? "",
-        street2: d.street2 ?? "",
+        street: d.street ?? "",
         city: d.city ?? "",
         state_province: d.state_province ?? "",
         postcode: d.postcode ?? "",
         country: d.country ?? "",
-        show_company_info: d.show_company_info ?? false,
         company_name: d.company_name ?? "",
         company_website: d.company_website ?? "",
         company_phone_number: d.company_phone_number ?? "",
-        show_social_links: d.show_social_links ?? false,
-        background_color: d.background_color ?? "",
-        text_color: d.text_color ?? "",
-        button_color: d.button_color ?? "",
-        button_text_color: d.button_text_color ?? "",
-        show_services: d.show_services ?? false,
-        show_products: d.show_products ?? false,
-        show_quick_links: d.show_quick_links ?? false,
         contact_exchange_enabled: d.contact_exchange_enabled ?? false,
+        background_color: a?.background_color ?? "",
+        text_color: a?.text_color ?? "",
+        button_color: a?.button_color ?? "",
+        button_text_color: a?.button_text_color ?? "",
+        override_company_template: a?.override_company_template ?? false,
       });
-      setSocialLinks(
-        (socialRes.data || []).map((s) => ({
-          id: s.id,
-          platform: s.platform,
-          url: s.url,
-        })),
-      );
-      setServices(
-        (servicesRes.data || []).map((s) => ({
-          id: s.id,
-          title: s.title,
-          description: s.description ?? "",
-        })),
-      );
-      setProducts(
-        (productsRes.data || []).map((p) => ({
-          id: p.id,
-          name: p.name,
-          description: p.description ?? "",
-          price: String(p.price ?? ""),
-        })),
-      );
-      setQuickLinks(
-        (quickRes.data || []).map((q) => ({
-          id: q.id,
-          title: q.title,
-          url: q.url ?? "",
-        })),
-      );
+      setProducts((productsRes.data || []).map((p) => ({ id: p.id, title: p.title, description: p.description ?? "" })));
+      setSocialLinks((socialRes.data || []).map((s) => ({ id: s.id, platform: s.platform, url: s.url })));
+      setServices((servicesRes.data || []).map((s) => ({ id: s.id, title: s.title, description: s.description ?? "", price: String(s.price ?? "") })));
+      setQuickLinks((quickRes.data || []).map((q) => ({ id: q.id, link_name: q.link_name, url: q.url })));
+      const vis: Record<string, boolean> = {};
+      for (const row of sectionsRes.data || []) vis[row.section_name] = row.is_visible;
+      setSectionsVisibility(vis);
     } catch {
       Alert.alert("Error", "Could not load profile.");
       goBack();
@@ -301,7 +267,7 @@ export default function AdminEditProfile() {
 
   // ── Image upload ─────────────────────────────────────────────────────────
 
-  const pickAndUpload = async (field: "avatar_url" | "cover_photo_url") => {
+  const pickAndUpload = async (field: "avatar_url" | "cover_image") => {
     const asset = await pickImage(field === "avatar_url" ? [1, 1] : [3, 1]);
     if (!asset) return;
     setUploadingField(field);
@@ -328,7 +294,7 @@ export default function AdminEditProfile() {
     }
   };
 
-  const removeImage = (field: "avatar_url" | "cover_photo_url") =>
+  const removeImage = (field: "avatar_url" | "cover_image") =>
     setField(field)("");
 
   // ── Color picker ──────────────────────────────────────────────────────────
@@ -345,47 +311,41 @@ export default function AdminEditProfile() {
     setColorTarget(null);
   };
 
-  // ── Social links CRUD ─────────────────────────────────────────────────────
-
-  const addSocialLink = () =>
-    setSocialLinks((p) => [...p, { id: null, platform: "", url: "" }]);
+  // ── Social links CRUD ──────────────────────────────────────────────────────
+  const addSocialLink    = () => setSocialLinks(p => [...p, { id: null, platform: "", url: "" }]);
   const updateSocialLink = (i: number, f: "platform" | "url", v: string) =>
-    setSocialLinks((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, [f]: v } : s)),
-    );
+    setSocialLinks(p => p.map((s, idx) => idx === i ? { ...s, [f]: v } : s));
   const deleteSocialLink = (i: number) =>
-    setSocialLinks((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, _deleted: true } : s)),
-    );
+    setSocialLinks(p => p.map((s, idx) => idx === i ? { ...s, _deleted: true } : s));
 
-  // ── Services CRUD ─────────────────────────────────────────────────────────
-
-  const addService = () =>
-    setServices((p) => [
-      ...p,
-      { id: null, title: "", description: "", _editing: true },
-    ]);
-  const updateService = (i: number, f: "title" | "description", v: string) =>
-    setServices((p) => p.map((s, idx) => (idx === i ? { ...s, [f]: v } : s)));
+  // ── Services CRUD ──────────────────────────────────────────────────────────
+  const addService    = () => setServices(p => [...p, { id: null, title: "", description: "", price: "", _editing: true }]);
+  const updateService = (i: number, f: "title" | "description" | "price", v: string) =>
+    setServices(p => p.map((s, idx) => idx === i ? { ...s, [f]: v } : s));
   const toggleEditService = (i: number) =>
-    setServices((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, _editing: !s._editing } : s)),
-    );
+    setServices(p => p.map((s, idx) => idx === i ? { ...s, _editing: !s._editing } : s));
   const deleteService = (i: number) =>
-    setServices((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, _deleted: true } : s)),
-    );
+    setServices(p => p.map((s, idx) => idx === i ? { ...s, _deleted: true } : s));
+
+  // ── Quick links CRUD ───────────────────────────────────────────────────────
+  const addQuickLink    = () => setQuickLinks(p => [...p, { id: null, link_name: "", url: "", _editing: true }]);
+  const updateQuickLink = (i: number, f: "link_name" | "url", v: string) =>
+    setQuickLinks(p => p.map((s, idx) => idx === i ? { ...s, [f]: v } : s));
+  const toggleEditQuickLink = (i: number) =>
+    setQuickLinks(p => p.map((s, idx) => idx === i ? { ...s, _editing: !s._editing } : s));
+  const deleteQuickLink = (i: number) =>
+    setQuickLinks(p => p.map((s, idx) => idx === i ? { ...s, _deleted: true } : s));
 
   // ── Products CRUD ─────────────────────────────────────────────────────────
 
   const addProduct = () =>
     setProducts((p) => [
       ...p,
-      { id: null, name: "", description: "", price: "", _editing: true },
+      { id: null, title: "", description: "", _editing: true },
     ]);
   const updateProduct = (
     i: number,
-    f: "name" | "description" | "price",
+    f: "title" | "description",
     v: string,
   ) =>
     setProducts((p) => p.map((s, idx) => (idx === i ? { ...s, [f]: v } : s)));
@@ -398,24 +358,6 @@ export default function AdminEditProfile() {
       p.map((s, idx) => (idx === i ? { ...s, _deleted: true } : s)),
     );
 
-  // ── Quick Links CRUD ──────────────────────────────────────────────────────
-
-  const addQuickLink = () =>
-    setQuickLinks((p) => [
-      ...p,
-      { id: null, title: "", url: "", _editing: true },
-    ]);
-  const updateQuickLink = (i: number, f: "title" | "url", v: string) =>
-    setQuickLinks((p) => p.map((s, idx) => (idx === i ? { ...s, [f]: v } : s)));
-  const toggleEditQuickLink = (i: number) =>
-    setQuickLinks((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, _editing: !s._editing } : s)),
-    );
-  const deleteQuickLink = (i: number) =>
-    setQuickLinks((p) =>
-      p.map((s, idx) => (idx === i ? { ...s, _deleted: true } : s)),
-    );
-
   // ── Save ──────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
@@ -425,6 +367,7 @@ export default function AdminEditProfile() {
     }
     setSaving(true);
     try {
+      // ── Update profiles table ─────────────────────────────────────────
       const { error: pErr } = await supabase
         .from("profiles")
         .update({
@@ -437,70 +380,82 @@ export default function AdminEditProfile() {
           mobile_number: form.mobile_number.trim() || null,
           profile_note: form.profile_note.trim() || null,
           avatar_url: form.avatar_url.trim() || null,
-          cover_photo_url: form.cover_photo_url.trim() || null,
+          cover_image: form.cover_image.trim() || null,
           street_address: form.street_address.trim() || null,
-          street2: form.street2.trim() || null,
+          street: form.street.trim() || null,
           city: form.city.trim() || null,
           state_province: form.state_province.trim() || null,
           postcode: form.postcode.trim() || null,
           country: form.country.trim() || null,
-          show_company_info: form.show_company_info,
           company_name: form.company_name.trim() || null,
           company_website: form.company_website.trim() || null,
           company_phone_number: form.company_phone_number.trim() || null,
-          show_social_links: form.show_social_links,
-          background_color: form.background_color.trim() || null,
-          text_color: form.text_color.trim() || null,
-          button_color: form.button_color.trim() || null,
-          button_text_color: form.button_text_color.trim() || null,
-          show_services: form.show_services,
-          show_products: form.show_products,
-          show_quick_links: form.show_quick_links,
           contact_exchange_enabled: form.contact_exchange_enabled,
         })
         .eq("id", profileId);
       if (pErr) throw pErr;
 
-      const crudSave = async (
-        table: string,
-        items: { id: string | null; _deleted?: boolean; [k: string]: any }[],
-        buildRow: (item: any) => any,
-      ) => {
-        const del = items.filter((i) => i._deleted && i.id);
-        const ins = items.filter((i) => !i._deleted && !i.id);
-        const upd = items.filter((i) => !i._deleted && !!i.id);
-        await Promise.all([
-          ...del.map((i) => supabase.from(table).delete().eq("id", i.id!)),
-          ins.length > 0
-            ? supabase
-                .from(table)
-                .insert(
-                  ins.map((i) => ({ profile_id: profileId, ...buildRow(i) })),
-                )
-            : Promise.resolve(),
-          ...upd.map((i) =>
-            supabase.from(table).update(buildRow(i)).eq("id", i.id!),
-          ),
-        ]);
-      };
+      // ── Upsert profile_appearance_settings ────────────────────────────
+      const { error: aErr } = await supabase
+        .from("profile_appearance_settings")
+        .upsert({
+          profile_id: profileId,
+          background_color: form.background_color || "#ffffff",
+          text_color: form.text_color || "#000000",
+          button_color: form.button_color || "#000000",
+          button_text_color: form.button_text_color || "#ffffff",
+          override_company_template: form.override_company_template,
+        }, { onConflict: "profile_id" });
+      if (aErr) throw aErr;
 
-      await crudSave("social_links", socialLinks, (i) => ({
-        platform: i.platform.trim(),
-        url: i.url.trim(),
-      }));
-      await crudSave("services", services, (i) => ({
-        title: i.title.trim(),
-        description: i.description.trim(),
-      }));
-      await crudSave("products", products, (i) => ({
-        name: i.name.trim(),
-        description: i.description.trim(),
-        price: i.price.trim() || null,
-      }));
-      await crudSave("quick_links", quickLinks, (i) => ({
-        title: i.title.trim(),
-        url: i.url.trim(),
-      }));
+      // ── Products CRUD ─────────────────────────────────────────────────
+      const del = products.filter((p) => p._deleted && p.id);
+      const ins = products.filter((p) => !p._deleted && !p.id && p.title.trim());
+      const upd = products.filter((p) => !p._deleted && !!p.id);
+      await Promise.all([
+        ...del.map((p) => supabase.from("products").delete().eq("id", p.id!)),
+        ins.length > 0 ? supabase.from("products").insert(ins.map((p) => ({ profile_id: profileId, title: p.title.trim(), description: p.description.trim() || null }))) : Promise.resolve(),
+        ...upd.map((p) => supabase.from("products").update({ title: p.title.trim(), description: p.description.trim() || null }).eq("id", p.id!)),
+      ]);
+
+      // ── Social media links CRUD ────────────────────────────────────────
+      const sDel = socialLinks.filter(s => s._deleted && s.id);
+      const sIns = socialLinks.filter(s => !s._deleted && !s.id && s.platform.trim());
+      const sUpd = socialLinks.filter(s => !s._deleted && !!s.id);
+      await Promise.all([
+        ...sDel.map(s => supabase.from("social_media_links").delete().eq("id", s.id!)),
+        sIns.length > 0 ? supabase.from("social_media_links").insert(sIns.map(s => ({ profile_id: profileId, platform: s.platform.trim(), url: s.url.trim() }))) : Promise.resolve(),
+        ...sUpd.map(s => supabase.from("social_media_links").update({ platform: s.platform.trim(), url: s.url.trim() }).eq("id", s.id!)),
+      ]);
+
+      // ── Services CRUD ──────────────────────────────────────────────────
+      const svDel = services.filter(s => s._deleted && s.id);
+      const svIns = services.filter(s => !s._deleted && !s.id && s.title.trim());
+      const svUpd = services.filter(s => !s._deleted && !!s.id);
+      await Promise.all([
+        ...svDel.map(s => supabase.from("services").delete().eq("id", s.id!)),
+        svIns.length > 0 ? supabase.from("services").insert(svIns.map(s => ({ profile_id: profileId, title: s.title.trim(), description: s.description.trim() || null, price: s.price ? Number(s.price) : null }))) : Promise.resolve(),
+        ...svUpd.map(s => supabase.from("services").update({ title: s.title.trim(), description: s.description.trim() || null, price: s.price ? Number(s.price) : null }).eq("id", s.id!)),
+      ]);
+
+      // ── Quick links CRUD ───────────────────────────────────────────────
+      const qDel = quickLinks.filter(q => q._deleted && q.id);
+      const qIns = quickLinks.filter(q => !q._deleted && !q.id && q.link_name.trim());
+      const qUpd = quickLinks.filter(q => !q._deleted && !!q.id);
+      await Promise.all([
+        ...qDel.map(q => supabase.from("quick_links").delete().eq("id", q.id!)),
+        qIns.length > 0 ? supabase.from("quick_links").insert(qIns.map(q => ({ profile_id: profileId, link_name: q.link_name.trim(), url: q.url.trim() }))) : Promise.resolve(),
+        ...qUpd.map(q => supabase.from("quick_links").update({ link_name: q.link_name.trim(), url: q.url.trim() }).eq("id", q.id!)),
+      ]);
+
+      // ── Sections visibility ────────────────────────────────────────────
+      const visEntries = Object.entries(sectionsVisibility);
+      if (visEntries.length > 0) {
+        await supabase.from("sections_visibility").upsert(
+          visEntries.map(([section_name, is_visible]) => ({ profile_id: profileId, section_name, is_visible })),
+          { onConflict: "profile_id,section_name" }
+        );
+      }
 
       Alert.alert("Saved", "Profile updated successfully.", [
         { text: "OK", onPress: goBack },
@@ -514,30 +469,54 @@ export default function AdminEditProfile() {
 
   if (loading)
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading profile…</Text>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg,
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={{ color: colors.secondaryLabel, fontSize: 15 }}>
+          Loading profile…
+        </Text>
       </View>
     );
 
-  const visibleSocialLinks = socialLinks
-    .map((s, i) => ({ ...s, i }))
-    .filter((s) => !s._deleted);
-  const visibleServices = services
-    .map((s, i) => ({ ...s, i }))
-    .filter((s) => !s._deleted);
   const visibleProducts = products
-    .map((s, i) => ({ ...s, i }))
-    .filter((s) => !s._deleted);
-  const visibleQuickLinks = quickLinks
     .map((s, i) => ({ ...s, i }))
     .filter((s) => !s._deleted);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <LinearGradient
-        colors={["#1a1a1a", "#0a0a0a"]}
-        style={styles.background}
+    <>
+      <Stack.Screen
+        options={{
+          title: "Edit Profile",
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={handleSave}
+              disabled={saving}
+              style={{ opacity: saving ? 0.5 : 1 }}
+              activeOpacity={0.7}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontSize: 17,
+                    fontWeight: "600",
+                  }}
+                >
+                  Save
+                </Text>
+              )}
+            </TouchableOpacity>
+          ),
+        }}
       />
 
       {/* Color picker modal */}
@@ -558,41 +537,13 @@ export default function AdminEditProfile() {
         onCancel={() => setColorTarget(null)}
       />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={goBack}
-          style={styles.backButton}
-          activeOpacity={0.7}
-        >
-          <ArrowLeft size={22} color="#fff" />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Edit Profile</Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {form.first_name} {form.last_name}
-          </Text>
-        </View>
-        <TouchableOpacity
-          onPress={handleSave}
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-          disabled={saving}
-          activeOpacity={0.75}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color="#007AFF" />
-          ) : (
-            <Check size={20} color="#007AFF" />
-          )}
-        </TouchableOpacity>
-      </View>
-
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={10}
       >
         <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
@@ -676,10 +627,10 @@ export default function AdminEditProfile() {
             <Divider />
             <ImagePickerField
               label="Cover Photo"
-              value={form.cover_photo_url}
-              uploading={uploadingField === "cover_photo_url"}
-              onPick={() => pickAndUpload("cover_photo_url")}
-              onRemove={() => removeImage("cover_photo_url")}
+              value={form.cover_image}
+              uploading={uploadingField === "cover_image"}
+              onPick={() => pickAndUpload("cover_image")}
+              onRemove={() => removeImage("cover_image")}
               aspectLabel="3:1 wide"
               isFirst={false}
               isLast
@@ -769,46 +720,29 @@ export default function AdminEditProfile() {
             />
           </View>
 
-          {/* ══ SOCIAL LINKS ═══════════════════════════════ */}
+          {/* ══ SOCIAL MEDIA LINKS ═════════════════════════ */}
           <SectionLabel>SOCIAL LINKS</SectionLabel>
           <View style={styles.section}>
             <ToggleRow
               label="Show Social Links"
-              value={form.show_social_links}
-              onValueChange={setField("show_social_links")}
+              value={sectionsVisibility["social_media_links"] ?? true}
+              onValueChange={v => setSectionsVisibility(prev => ({ ...prev, social_media_links: v }))}
               isFirst
-              isLast={visibleSocialLinks.length === 0}
+              isLast={socialLinks.filter(s => !s._deleted).length === 0}
             />
-            {visibleSocialLinks.map((link) => (
-              <View key={link.i}>
+            {socialLinks.filter(s => !s._deleted).map((link, idx) => (
+              <View key={idx}>
                 <Divider />
                 <View style={styles.socialRow}>
                   <View style={styles.socialFields}>
-                    <TextInput
-                      style={styles.socialPlatformInput}
-                      value={link.platform}
-                      onChangeText={(v) =>
-                        updateSocialLink(link.i, "platform", v)
-                      }
-                      placeholder="Platform (e.g. LinkedIn)"
-                      placeholderTextColor="#48484a"
-                      autoCorrect={false}
-                    />
-                    <TextInput
-                      style={styles.socialUrlInput}
-                      value={link.url}
-                      onChangeText={(v) => updateSocialLink(link.i, "url", v)}
-                      placeholder="https://…"
-                      placeholderTextColor="#48484a"
-                      keyboardType="url"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
+                    <TextInput style={styles.socialPlatformInput} value={link.platform}
+                      onChangeText={v => updateSocialLink(socialLinks.indexOf(link), "platform", v)}
+                      placeholder="Platform (e.g. LinkedIn)" placeholderTextColor="#48484a" autoCorrect={false} />
+                    <TextInput style={styles.socialUrlInput} value={link.url}
+                      onChangeText={v => updateSocialLink(socialLinks.indexOf(link), "url", v)}
+                      placeholder="https://…" placeholderTextColor="#48484a" keyboardType="url" autoCapitalize="none" autoCorrect={false} />
                   </View>
-                  <TouchableOpacity
-                    onPress={() => deleteSocialLink(link.i)}
-                    style={styles.deleteButton}
-                  >
+                  <TouchableOpacity onPress={() => deleteSocialLink(socialLinks.indexOf(link))} style={styles.deleteButton}>
                     <Trash2 size={18} color="#FF3B30" />
                   </TouchableOpacity>
                 </View>
@@ -822,94 +756,95 @@ export default function AdminEditProfile() {
           <View style={styles.section}>
             <ToggleRow
               label="Show Services"
-              value={form.show_services}
-              onValueChange={setField("show_services")}
+              value={sectionsVisibility["services"] ?? true}
+              onValueChange={v => setSectionsVisibility(prev => ({ ...prev, services: v }))}
               isFirst
-              isLast={visibleServices.length === 0}
+              isLast={services.filter(s => !s._deleted).length === 0}
             />
-            {visibleServices.map((item) => (
-              <View key={item.i}>
-                <Divider />
-                {item._editing ? (
-                  <View style={styles.crudEditBlock}>
-                    <Text style={styles.fieldLabel}>TITLE</Text>
-                    <TextInput
-                      style={styles.crudInput}
-                      value={item.title}
-                      onChangeText={(v) => updateService(item.i, "title", v)}
-                      placeholder="Service name"
-                      placeholderTextColor="#48484a"
-                      autoCapitalize="words"
-                    />
-                    <Text style={[styles.fieldLabel, { marginTop: 10 }]}>
-                      DESCRIPTION
-                    </Text>
-                    <TextInput
-                      style={[styles.crudInput, styles.crudInputMultiline]}
-                      value={item.description}
-                      onChangeText={(v) =>
-                        updateService(item.i, "description", v)
-                      }
-                      placeholder="Short description…"
-                      placeholderTextColor="#48484a"
-                      multiline
-                      numberOfLines={3}
-                    />
-                    <View style={styles.crudActions}>
-                      <TouchableOpacity
-                        style={styles.crudDone}
-                        onPress={() => toggleEditService(item.i)}
-                      >
-                        <Check size={15} color="#fff" />
-                        <Text style={styles.crudDoneText}>Done</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.crudDeleteBtn}
-                        onPress={() => deleteService(item.i)}
-                      >
-                        <Trash2 size={15} color="#FF3B30" />
-                        <Text style={styles.crudDeleteText}>Remove</Text>
-                      </TouchableOpacity>
+            {services.filter(s => !s._deleted).map((item, idx) => {
+              const realIdx = services.indexOf(item);
+              return (
+                <View key={idx}>
+                  <Divider />
+                  {item._editing ? (
+                    <View style={styles.crudEditBlock}>
+                      <Text style={styles.fieldLabel}>TITLE</Text>
+                      <TextInput style={styles.crudInput} value={item.title} onChangeText={v => updateService(realIdx, "title", v)} placeholder="Service name" placeholderTextColor="#48484a" autoCapitalize="words" />
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>DESCRIPTION</Text>
+                      <TextInput style={[styles.crudInput, styles.crudInputMultiline]} value={item.description} onChangeText={v => updateService(realIdx, "description", v)} placeholder="Short description…" placeholderTextColor="#48484a" multiline numberOfLines={3} />
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>PRICE</Text>
+                      <TextInput style={styles.crudInput} value={item.price} onChangeText={v => updateService(realIdx, "price", v)} placeholder="e.g. 99.00" placeholderTextColor="#48484a" keyboardType="decimal-pad" />
+                      <View style={styles.crudActions}>
+                        <TouchableOpacity style={styles.crudDone} onPress={() => toggleEditService(realIdx)}><Check size={15} color="#fff" /><Text style={styles.crudDoneText}>Done</Text></TouchableOpacity>
+                        <TouchableOpacity style={styles.crudDeleteBtn} onPress={() => deleteService(realIdx)}><Trash2 size={15} color="#FF3B30" /><Text style={styles.crudDeleteText}>Remove</Text></TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                ) : (
-                  <View style={styles.crudRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.crudRowTitle}>
-                        {item.title || "Untitled service"}
-                      </Text>
-                      {!!item.description && (
-                        <Text style={styles.crudRowSub} numberOfLines={1}>
-                          {item.description}
-                        </Text>
-                      )}
+                  ) : (
+                    <View style={styles.crudRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.crudRowTitle}>{item.title || "Untitled service"}</Text>
+                        {!!item.description && <Text style={styles.crudRowSub} numberOfLines={1}>{item.description}</Text>}
+                        {!!item.price && <Text style={styles.crudRowSub}>${item.price}</Text>}
+                      </View>
+                      <TouchableOpacity onPress={() => toggleEditService(realIdx)} style={styles.crudRowBtn}><Edit2 size={16} color="#007AFF" /></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteService(realIdx)} style={styles.crudRowBtn}><Trash2 size={16} color="#FF3B30" /></TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => toggleEditService(item.i)}
-                      style={styles.crudRowBtn}
-                    >
-                      <Edit2 size={16} color="#007AFF" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => deleteService(item.i)}
-                      style={styles.crudRowBtn}
-                    >
-                      <Trash2 size={16} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))}
+                  )}
+                </View>
+              );
+            })}
           </View>
           <AddButton label="Add Service" onPress={addService} />
+
+          {/* ══ QUICK LINKS ════════════════════════════════ */}
+          <SectionLabel>QUICK LINKS</SectionLabel>
+          <View style={styles.section}>
+            <ToggleRow
+              label="Show Quick Links"
+              value={sectionsVisibility["quick_links"] ?? true}
+              onValueChange={v => setSectionsVisibility(prev => ({ ...prev, quick_links: v }))}
+              isFirst
+              isLast={quickLinks.filter(q => !q._deleted).length === 0}
+            />
+            {quickLinks.filter(q => !q._deleted).map((item, idx) => {
+              const realIdx = quickLinks.indexOf(item);
+              return (
+                <View key={idx}>
+                  <Divider />
+                  {item._editing ? (
+                    <View style={styles.crudEditBlock}>
+                      <Text style={styles.fieldLabel}>LABEL</Text>
+                      <TextInput style={styles.crudInput} value={item.link_name} onChangeText={v => updateQuickLink(realIdx, "link_name", v)} placeholder="Link label" placeholderTextColor="#48484a" autoCapitalize="words" />
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>URL</Text>
+                      <TextInput style={styles.crudInput} value={item.url} onChangeText={v => updateQuickLink(realIdx, "url", v)} placeholder="https://…" placeholderTextColor="#48484a" keyboardType="url" autoCapitalize="none" />
+                      <View style={styles.crudActions}>
+                        <TouchableOpacity style={styles.crudDone} onPress={() => toggleEditQuickLink(realIdx)}><Check size={15} color="#fff" /><Text style={styles.crudDoneText}>Done</Text></TouchableOpacity>
+                        <TouchableOpacity style={styles.crudDeleteBtn} onPress={() => deleteQuickLink(realIdx)}><Trash2 size={15} color="#FF3B30" /><Text style={styles.crudDeleteText}>Remove</Text></TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.crudRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.crudRowTitle}>{item.link_name || "Untitled link"}</Text>
+                        {!!item.url && <Text style={styles.crudRowSub} numberOfLines={1}>{item.url}</Text>}
+                      </View>
+                      <TouchableOpacity onPress={() => toggleEditQuickLink(realIdx)} style={styles.crudRowBtn}><Edit2 size={16} color="#007AFF" /></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteQuickLink(realIdx)} style={styles.crudRowBtn}><Trash2 size={16} color="#FF3B30" /></TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+          <AddButton label="Add Quick Link" onPress={addQuickLink} />
 
           {/* ══ PRODUCTS ═══════════════════════════════════ */}
           <SectionLabel>PRODUCTS</SectionLabel>
           <View style={styles.section}>
             <ToggleRow
               label="Show Products"
-              value={form.show_products}
-              onValueChange={setField("show_products")}
+              value={sectionsVisibility["products"] ?? true}
+              onValueChange={v => setSectionsVisibility(prev => ({ ...prev, products: v }))}
               isFirst
               isLast={visibleProducts.length === 0}
             />
@@ -918,11 +853,11 @@ export default function AdminEditProfile() {
                 <Divider />
                 {item._editing ? (
                   <View style={styles.crudEditBlock}>
-                    <Text style={styles.fieldLabel}>NAME</Text>
+                    <Text style={styles.fieldLabel}>TITLE</Text>
                     <TextInput
                       style={styles.crudInput}
-                      value={item.name}
-                      onChangeText={(v) => updateProduct(item.i, "name", v)}
+                      value={item.title}
+                      onChangeText={(v) => updateProduct(item.i, "title", v)}
                       placeholder="Product name"
                       placeholderTextColor="#48484a"
                       autoCapitalize="words"
@@ -940,17 +875,6 @@ export default function AdminEditProfile() {
                       placeholderTextColor="#48484a"
                       multiline
                       numberOfLines={3}
-                    />
-                    <Text style={[styles.fieldLabel, { marginTop: 10 }]}>
-                      PRICE
-                    </Text>
-                    <TextInput
-                      style={styles.crudInput}
-                      value={item.price}
-                      onChangeText={(v) => updateProduct(item.i, "price", v)}
-                      placeholder="e.g. 99.00"
-                      placeholderTextColor="#48484a"
-                      keyboardType="decimal-pad"
                     />
                     <View style={styles.crudActions}>
                       <TouchableOpacity
@@ -973,13 +897,13 @@ export default function AdminEditProfile() {
                   <View style={styles.crudRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.crudRowTitle}>
-                        {item.name || "Untitled product"}
+                        {item.title || "Untitled product"}
                       </Text>
-                      <Text style={styles.crudRowSub} numberOfLines={1}>
-                        {[item.price && `$${item.price}`, item.description]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </Text>
+                      {!!item.description && (
+                        <Text style={styles.crudRowSub} numberOfLines={1}>
+                          {item.description}
+                        </Text>
+                      )}
                     </View>
                     <TouchableOpacity
                       onPress={() => toggleEditProduct(item.i)}
@@ -999,90 +923,6 @@ export default function AdminEditProfile() {
             ))}
           </View>
           <AddButton label="Add Product" onPress={addProduct} />
-
-          {/* ══ QUICK LINKS ════════════════════════════════ */}
-          <SectionLabel>QUICK LINKS</SectionLabel>
-          <View style={styles.section}>
-            <ToggleRow
-              label="Show Quick Links"
-              value={form.show_quick_links}
-              onValueChange={setField("show_quick_links")}
-              isFirst
-              isLast={visibleQuickLinks.length === 0}
-            />
-            {visibleQuickLinks.map((item) => (
-              <View key={item.i}>
-                <Divider />
-                {item._editing ? (
-                  <View style={styles.crudEditBlock}>
-                    <Text style={styles.fieldLabel}>LABEL</Text>
-                    <TextInput
-                      style={styles.crudInput}
-                      value={item.title}
-                      onChangeText={(v) => updateQuickLink(item.i, "title", v)}
-                      placeholder="Link label"
-                      placeholderTextColor="#48484a"
-                      autoCapitalize="words"
-                    />
-                    <Text style={[styles.fieldLabel, { marginTop: 10 }]}>
-                      URL
-                    </Text>
-                    <TextInput
-                      style={styles.crudInput}
-                      value={item.url}
-                      onChangeText={(v) => updateQuickLink(item.i, "url", v)}
-                      placeholder="https://…"
-                      placeholderTextColor="#48484a"
-                      keyboardType="url"
-                      autoCapitalize="none"
-                    />
-                    <View style={styles.crudActions}>
-                      <TouchableOpacity
-                        style={styles.crudDone}
-                        onPress={() => toggleEditQuickLink(item.i)}
-                      >
-                        <Check size={15} color="#fff" />
-                        <Text style={styles.crudDoneText}>Done</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.crudDeleteBtn}
-                        onPress={() => deleteQuickLink(item.i)}
-                      >
-                        <Trash2 size={15} color="#FF3B30" />
-                        <Text style={styles.crudDeleteText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={styles.crudRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.crudRowTitle}>
-                        {item.title || "Untitled link"}
-                      </Text>
-                      {!!item.url && (
-                        <Text style={styles.crudRowSub} numberOfLines={1}>
-                          {item.url}
-                        </Text>
-                      )}
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => toggleEditQuickLink(item.i)}
-                      style={styles.crudRowBtn}
-                    >
-                      <Edit2 size={16} color="#007AFF" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => deleteQuickLink(item.i)}
-                      style={styles.crudRowBtn}
-                    >
-                      <Trash2 size={16} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))}
-          </View>
-          <AddButton label="Add Quick Link" onPress={addQuickLink} />
 
           {/* ══ APPEARANCE ═════════════════════════════════ */}
           <SectionLabel>PROFILE APPEARANCE</SectionLabel>
@@ -1147,7 +987,7 @@ export default function AdminEditProfile() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </>
   );
 }
 
